@@ -127,6 +127,6 @@ void Dataflow::run(Function &F, map<BasicBlock *, struct bbInfo *> infoMap) {
     }
     ++iter;
   }
-  outs() << "DFA converged after " << iter << " iterations\n";
+  // outs() << "DFA converged after " << iter << " iterations\n";
 }
 } // namespace llvm
