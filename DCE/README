@@ -1,10 +1,9 @@
-$ make clean
+To build the code, run:
 
+$ make clean
 $ make
 
 To run the tests:
 
-$ clang -Xclang -disable-O0-optnone -O0 -emit-llvm -c ./tests/dce_test1.c -o ./tests/dce_test1.bc
-$ opt -mem2reg -instnamer ./tests/dce_test1.bc -o ./tests/dce_test1-m2r.bc
-
-$ opt -enable-new-pm=0 -load ./deadCodeElimination.so -dead-code-elimination ./tests/dce_test1-m2r.bc -o out
+$ make run-dce-1
+$ make run-dce-2
