@@ -1,0 +1,7 @@
+$ make clean
+
+$ make
+
+To run the tests:
+
+$ 
