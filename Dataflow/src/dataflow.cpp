@@ -55,7 +55,7 @@ void Dataflow::initializeBlocks(struct bbProps *block) {
  */
 void Dataflow::initialize(Function &F,
                           map<BasicBlock *, struct bbInfo *> infoMap) {
-  BitVector empty(domainSize, false);
+  BitVector empty(domainSize, false); // Empty Set
 
   for (BasicBlock &BB : F) {
     struct bbProps *props = new bbProps();

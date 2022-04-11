@@ -1,7 +1,11 @@
-$ make clean
+To build the Dominators pass, run:
 
+$ make clean
 $ make
 
-To run the tests:
+To run tests:
+$ make run-dom-1
+$ make run-dom-2
 
-$ 
+To run your custom tests:
+$ opt -enable-new-pm=0 -load=./dominators.so -dominators <path-to-test-file-bitcode> -o /dev/null
