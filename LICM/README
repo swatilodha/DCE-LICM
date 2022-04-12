@@ -1,0 +1,27 @@
+# Loop Invariant Code Motion Pass
+
+This directory implemented two Loop Passes :
+
+1. Landing Pad Transformation Pass - Similar to the loop-rotate pass in LLVM
+2. Loop Invariant Code Motion Pass - Similar to the licm pass in LLVM
+
+The loop invariant code motion pass assumes that its input is already modified by 
+the landing pad transformation pass, therefore, they must be executed in order.
+
+To build the passes, run:
+ ```
+ make clean  
+ make
+ ```
+
+To run the tests:
+ ```
+ make run-licm-1
+ make run-licm-2
+ make run-licm-3
+ ```
+
+To test against custom input, run:
+```
+opt -enable-new-pm=0 -load=./licm.so -loop-invariant-code-motion <path-to-input-file> -o <path-to-output-file>
+```
