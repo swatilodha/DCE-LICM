@@ -8,21 +8,30 @@
 #include "llvm/Support/raw_ostream.h"
 #include <llvm/Analysis/LoopPass.h>
 
+#include <map>
+#include <vector>
+
 using namespace llvm;
 using namespace std;
 
 namespace llvm {
+/**
+ * @brief Landing Pad transform inserts landing pad blocks between the loop
+ * header and preheader, that can be used to hoist loop-invariant computations.
+ * In addition to that, it rotates the loop into a do-until loop structure, and
+ * adds the loop initial condition to the preheader, so that control only flows
+ * into the loop body, if the condition for the loop running atleast once is
+ * true.
+ *
+ */
 class LandingPadTransform : public LoopPass {
 private:
-  void updateLatch(BasicBlock *, BasicBlock *);
-  void moveCondFromHeaderToPreheader(BasicBlock *, BasicBlock *);
-  void removePhiDependencies(BasicBlock *newtest, BasicBlock *header);
-  void updatePhiNotInLoop(Loop &loop,
-                          SmallVector<Instruction *, 10> &previousPhiUsers,
-                          PHINode *from, PHINode *to);
-  void unifyPhiAtExit(BasicBlock *newtest, BasicBlock *unifiedExit,
-                      BasicBlock *loopexit, BasicBlock *header,
-                      BasicBlock *lastBody, Loop *L);
+  void moveCondFromHeaderToLatch(BasicBlock *, BasicBlock *);
+  void moveCondFromHeaderToPreheader(BasicBlock *, BasicBlock *, BasicBlock *);
+  void updatePhiUsesOutsideLoop(Loop *, vector<Instruction *> &, PHINode *,
+                          PHINode *);
+  void joinPreheaderAndLatchAtExit(BasicBlock *, BasicBlock *, BasicBlock *, Loop *,
+                      LoopInfo &);
 
 public:
   static char ID;

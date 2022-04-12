@@ -1,86 +1,13 @@
 
-
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/IR/Function.h"
-#include "llvm/Pass.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include <llvm/ADT/SmallVector.h>
-#include <llvm/Analysis/CFGPrinter.h>
-#include <llvm/IR/InstIterator.h>
-#include <llvm/IR/Instruction.h>
-#include <llvm/Transforms/Utils/SSAUpdater.h>
-
 #include "landing-pad.h"
-
-#include <llvm/Analysis/LoopPass.h>
-
 #include <map>
+#include <vector>
 
 using namespace std;
 
 namespace llvm {
 
 LandingPadTransform::LandingPadTransform() : LoopPass(ID) {}
-
-void LandingPadTransform::updatePhiNotInLoop(
-    Loop &loop, SmallVector<Instruction *, 10> &previousPhiUsers, PHINode *from,
-    PHINode *to) {
-  std::vector<BasicBlock *> &loopBlocks = loop.getBlocksVector();
-  for (Instruction *I : previousPhiUsers) {
-    BasicBlock *usersBlock = I->getParent();
-    if ((std::find(loopBlocks.begin(), loopBlocks.end(), usersBlock) ==
-         loopBlocks.end())) {
-      if (I != to) {
-        I->replaceUsesOfWith(from, to);
-      }
-    }
-  }
-}
-
-void LandingPadTransform::unifyPhiAtExit(BasicBlock *newtest,
-                                         BasicBlock *unifiedExit,
-                                         BasicBlock *loopexit,
-                                         BasicBlock *header,
-                                         BasicBlock *lastBody, Loop *L) {
-  SmallVector<PHINode *, 10> insertedPhi;
-  SmallVector<Instruction *, 10> previousPhiUsers;
-
-  for (Instruction &I : *header) {
-    if (PHINode *phi = dyn_cast<PHINode>(&I)) {
-
-      for (User *U : phi->users()) {
-        if (Instruction *UI = dyn_cast<Instruction>(U)) {
-          previousPhiUsers.push_back(UI);
-        }
-      }
-
-      PHINode *exitphi = PHINode::Create(I.getType(), 0);
-      exitphi->addIncoming(phi, lastBody);
-      exitphi->addIncoming(phi->getIncomingValue(0), newtest);
-      loopexit->getInstList().push_front(exitphi);
-      insertedPhi.push_back(phi);
-
-      updatePhiNotInLoop(*L, previousPhiUsers, phi, exitphi);
-    }
-  }
-}
-
-void LandingPadTransform::removePhiDependencies(BasicBlock *preHeader,
-                                                BasicBlock *header) {
-  for (Instruction &I : *header) {
-    if (PHINode *phi = dyn_cast<PHINode>(&I)) {
-      Value *incomingValue = phi->getIncomingValue(0);
-      for (Instruction &newtestI : *preHeader) {
-        for (auto OP = newtestI.op_begin(); OP != newtestI.op_end(); ++OP) {
-          if (OP->get() == &I) {
-            OP->set(incomingValue);
-          }
-        }
-      }
-    }
-  }
-}
 
 /**
  * @brief This function performs three subroutines:
@@ -95,7 +22,7 @@ void LandingPadTransform::removePhiDependencies(BasicBlock *preHeader,
  * @param loopLatch
  * @param header
  */
-void LandingPadTransform::updateLatch(BasicBlock *loopLatch,
+void LandingPadTransform::moveCondFromHeaderToLatch(BasicBlock *loopLatch,
                                       BasicBlock *header) {
 
   /* Since we are removing the out-edge from loop header to exit,
@@ -146,14 +73,140 @@ void LandingPadTransform::updateLatch(BasicBlock *loopLatch,
   }
 }
 
-/*
+/* A Phi instruction has variable assignment based on which incoming edge the
+ * control enters from. Lets say, phi(BB) returns the incoming value from BB.
+ * Moving the Loop condition from header to preheader is a three-step process:
+ * 1. Remove the terminator instruction of preheader and replace it with the
+ * non-Phi instructions of header.
+ * 2. Loop condition statements in loop header, e.g. icmp, br, accept variables
+ * from Phi instructions. If an instruction in Preheader, refers to a Phi
+ * variable defined in the header, replace it with the incoming value from the
+ * preheader block, i.e. phi(preheader)
+ * 3. Link pre-header to landing-pad, and loop header to loop body.
  */
-void LandingPadTransform::moveCondFromHeaderToPreheader(BasicBlock *preHeader,
-                                                        BasicBlock *header) {
+void LandingPadTransform::moveCondFromHeaderToPreheader(
+    BasicBlock *preHeader, BasicBlock *header, BasicBlock *landingPad) {
+
+  // Remove the terminator instruction of pre-header.
   preHeader->getTerminator()->eraseFromParent();
+
+  // Move all non-Phi instructions from header to the end of the pre-header.
   preHeader->getInstList().splice(preHeader->end(), header->getInstList(),
                                   header->getFirstNonPHI()->getIterator(),
                                   header->end());
+
+  /* If the copied instructions in the pre-header refer to a Phi variable
+   * defined in header, replace that variable with the incoming value from the
+   * Phi Instruction.
+   */
+  for (Instruction &I : *header) {
+    if (PHINode *phi = dyn_cast<PHINode>(&I)) {
+      // Incoming Value from the landing pad incoming edge.
+      Value *incomingValue = phi->getIncomingValue(0);
+      for (Instruction &preHeaderInst : *preHeader) {
+        for (auto op = preHeaderInst.op_begin(); op != preHeaderInst.op_end();
+             ++op) {
+
+          // If operand is a Phi instruction, replace it with incoming value.
+          if (op->get() == &I) {
+            op->set(incomingValue);
+          }
+        }
+      }
+    }
+  }
+  // The terminator of pre-header is spliced from the header, so it is still
+  // pointing to the loop body.
+  BranchInst *phTerminator = cast<BranchInst>(preHeader->getTerminator());
+  BasicBlock *loopBody = cast<BasicBlock>(phTerminator->getOperand(2));
+
+  // Modify terminator of pre-header to point to landing pad block.
+  preHeader->getTerminator()->setOperand(2, landingPad);
+
+  // Join loop header and loop body.
+  BranchInst *bi = BranchInst::Create(loopBody, header);
+}
+
+/* Prior to transformation, there was only one incoming edge at the loop exit,
+ * i.e. from the loop header. After transformation, there are two incoming edges
+ * at the loop exit, from loop latch and preheader.Therefore, definitions that
+ * reached exit from loop header, can now reach from both loop latch and
+ * preheader.This function unites the definitions coming from both these blocks,
+ * at the loop exit.
+ */
+void LandingPadTransform::joinPreheaderAndLatchAtExit(BasicBlock *preHeader,
+                                                      BasicBlock *header,
+                                                      BasicBlock *loopLatch,
+                                                      Loop *L,
+                                                      LoopInfo &loopInfo) {
+
+  BasicBlock *loopExit =
+      dyn_cast<BasicBlock>(preHeader->getTerminator()->getOperand(1));
+
+  // Insert a block before the loop exit. This new block will retain the name of
+  // the loop-exit block, and the previous loop exit block will be renamed to
+  // .commonexit. Therefore, loopExit will become loopExit->commonExit
+  BasicBlock *commonExit =
+      loopExit->splitBasicBlock(loopExit->begin(), ".commonexit");
+
+  // Add the join block to the parent loop.
+  if (Loop *parent = L->getParentLoop()) {
+    parent->addBasicBlockToLoop(commonExit, loopInfo);
+  }
+
+  vector<Instruction *>
+      prevPhiUsers; // Stores users for the Phi instructions in loop header.
+
+  for (Instruction &I : *header) {
+    if (PHINode *phi = dyn_cast<PHINode>(&I)) {
+
+      // Store users of Phi variables from the loop header.
+      for (User *U : phi->users()) {
+        if (Instruction *UI = dyn_cast<Instruction>(U)) {
+          prevPhiUsers.push_back(UI);
+        }
+      }
+
+      // Create a Phi instruction in the new loop-exit block for every Phi
+      // instruction in loop header. If the incoming edge is from loop latch,
+      // the incoming value will be same as the Phi variable in loop-header. If
+      // the incoming edge is from the pre-header, the incoming value wil be
+      // same as header_phi_instruction->getIncomingValue(0).
+      //
+      PHINode *phiAtExit = PHINode::Create(I.getType(), 0);
+      phiAtExit->addIncoming(phi, loopLatch);
+      phiAtExit->addIncoming(phi->getIncomingValue(0), preHeader);
+
+      // Push Phi node to the front of the new loop exit block.
+      loopExit->getInstList().push_front(phiAtExit);
+
+      // Since we unified definitions in the loop exit, we need to update the
+      // uses of Phi instructions from the loop headers, to the new Phi
+      // instructions inserted in loop exit. However, we only need to change the
+      // users that are not inside the loop, to maintain correctness of the
+      // original program.
+      updatePhiUsesOutsideLoop(L, prevPhiUsers, phi, phiAtExit);
+    }
+  }
+}
+
+/* For all previous users of Phi instructions from the loop header that are not
+ * part of the loop, we replace the uses of *from* PHINode with *to* PHINode.
+ */
+void LandingPadTransform::updatePhiUsesOutsideLoop(
+    Loop *L, vector<Instruction *> &prevPhiUsers, PHINode *from, PHINode *to) {
+
+  // List of BasicBlocks within a loop.
+  vector<BasicBlock *> &loopBlocks = L->getBlocksVector();
+  for (Instruction *I : prevPhiUsers) {
+    BasicBlock *usersBlock = I->getParent();
+    if ((find(loopBlocks.begin(), loopBlocks.end(), usersBlock) ==
+         loopBlocks.end())) {
+      if (I != to) {
+        I->replaceUsesOfWith(from, to);
+      }
+    }
+  }
 }
 
 bool LandingPadTransform::runOnLoop(Loop *L, LPPassManager &LPM) {
@@ -166,39 +219,26 @@ bool LandingPadTransform::runOnLoop(Loop *L, LPPassManager &LPM) {
     BasicBlock *landingPad =
         preHeader->splitBasicBlock(preHeader->getTerminator(), ".landingpad");
 
+    // If a parent loop exists, add landingpad to the parent loop, so that the
+    // algorithm can bubble out deeply nested loop invariant computations. Note:
+    // LLVM Loop Pass execution starts from the deepest loops to the outer
+    // loops, so inner loops are computed before outer loops.
     if (Loop *parent = L->getParentLoop()) {
       parent->addBasicBlockToLoop(landingPad, loopInfo);
     }
 
     BasicBlock *loopLatch = L->getLoopLatch();
 
-    updateLatch(loopLatch, header);
+    moveCondFromHeaderToLatch(loopLatch, header);
 
-    moveCondFromHeaderToPreheader(preHeader, header);
+    moveCondFromHeaderToPreheader(preHeader, header, landingPad);
 
-    removePhiDependencies(preHeader, header);
+    joinPreheaderAndLatchAtExit(preHeader, header, loopLatch, L, loopInfo);
 
-    BranchInst *phTerminator = cast<BranchInst>(preHeader->getTerminator());
-
-    BasicBlock *loopBody = cast<BasicBlock>(phTerminator->getOperand(2));
-
-    preHeader->getTerminator()->setOperand(2, landingPad);
-
-    BranchInst *bi = BranchInst::Create(loopBody, header);
-
-    BasicBlock *loopExit = L->getExitBlock(); 
-
-    BasicBlock *unifiedExit =
-        loopExit->splitBasicBlock(loopExit->begin(), ".unitedexit");
-
-    if (Loop *parent = L->getParentLoop()) {
-      parent->addBasicBlockToLoop(unifiedExit, loopInfo);
-    }
-
-    unifyPhiAtExit(preHeader, unifiedExit, loopExit, header, loopLatch, L);
+    return true;
   }
 
-  return true;
+  return false;
 }
 
 void LandingPadTransform::getAnalysisUsage(AnalysisUsage &AU) const {
@@ -206,5 +246,6 @@ void LandingPadTransform::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 
 char LandingPadTransform::ID = 2;
-RegisterPass<LandingPadTransform> lPad("landing-pad", "ECE 5984 Landing Pad");
+RegisterPass<LandingPadTransform>
+    lPad("landing-pad", "CS/ECE 5544 Landing Pad Transformation Pass");
 } // namespace llvm
