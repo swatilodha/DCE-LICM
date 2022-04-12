@@ -1,4 +1,4 @@
-// ECE/CS 5544 S22 Assignment 3: deadCodeElimination.cpp
+// ECE/CS 5544 Assignment 3: deadCodeElimination.cpp
 // Group: Swati Lodha, Abhijit Tripathy
 
 ////////////////////////////////////////////////////////////////////////////////

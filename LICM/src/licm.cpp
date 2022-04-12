@@ -1,4 +1,5 @@
-// Group Details
+// ECE/CS 5544 Assignment 3: licm.cpp
+// Group: Swati Lodha, Abhijit Tripathy
 
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/ValueTracking.h"

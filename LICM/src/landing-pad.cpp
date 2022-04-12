@@ -1,3 +1,5 @@
+// ECE/CS 5544 Assignment 3: landing-pad.cpp
+// Group: Swati Lodha, Abhijit Tripathy
 
 #include "landing-pad.h"
 #include <map>

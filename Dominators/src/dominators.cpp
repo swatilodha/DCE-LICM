@@ -1,4 +1,4 @@
-// ECE/CS 5544 S22 Assignment 3: dominators.cpp
+// ECE/CS 5544 Assignment 3: dominators.cpp
 // Group: Swati Lodha, Abhijit Tripathy
 
 ////////////////////////////////////////////////////////////////////////////////
