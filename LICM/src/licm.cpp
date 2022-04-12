@@ -109,51 +109,51 @@ private:
     return loopInstructions;
   }
 
-  vector<Value *> topologicalSort(vector<Value *> instructions) {
-    map<Value *, set<Value *>> graph;
-    map<Value *, int> inEdges;
+  // vector<Value *> topologicalSort(vector<Value *> instructions) {
+  //   map<Value *, set<Value *>> graph;
+  //   map<Value *, int> inEdges;
 
-    queue<Value *> queue;
-    vector<Value *> sortedList;
+  //   queue<Value *> queue;
+  //   vector<Value *> sortedList;
 
-    for (vector<Value *>::iterator itr = instructions.begin();
-         itr != instructions.end(); ++itr) {
-      inEdges[*itr] = 0;
-    }
-    for (vector<Value *>::iterator itr = instructions.begin();
-         itr != instructions.end(); ++itr) {
-      Instruction *I = dyn_cast<Instruction>(*itr);
-      for (Instruction::op_iterator opItr = I->op_begin(); opItr != I->op_end();
-           ++opItr) {
-        if (find(instructions.begin(), instructions.end(), *opItr) !=
-            instructions.end()) {
-          inEdges[I]++;
-        }
-        graph[*opItr].insert(I);
-      }
-    }
+  //   for (vector<Value *>::iterator itr = instructions.begin();
+  //        itr != instructions.end(); ++itr) {
+  //     inEdges[*itr] = 0;
+  //   }
+  //   for (vector<Value *>::iterator itr = instructions.begin();
+  //        itr != instructions.end(); ++itr) {
+  //     Instruction *I = dyn_cast<Instruction>(*itr);
+  //     for (Instruction::op_iterator opItr = I->op_begin(); opItr != I->op_end();
+  //          ++opItr) {
+  //       if (find(instructions.begin(), instructions.end(), *opItr) !=
+  //           instructions.end()) {
+  //         inEdges[I]++;
+  //       }
+  //       graph[*opItr].insert(I);
+  //     }
+  //   }
 
-    for(map<Value *, int>::iterator itr = inEdges.begin(); itr != inEdges.end(); ++itr) {
-      if(itr->second == 0) {
-        queue.push(itr->first);
-      }
-    }
+  //   for(map<Value *, int>::iterator itr = inEdges.begin(); itr != inEdges.end(); ++itr) {
+  //     if(itr->second == 0) {
+  //       queue.push(itr->first);
+  //     }
+  //   }
 
-    while(!queue.empty()) {
-      Value *noDep = queue.front();
-      sortedList.push_back(noDep);
-      queue.pop();
+  //   while(!queue.empty()) {
+  //     Value *noDep = queue.front();
+  //     sortedList.push_back(noDep);
+  //     queue.pop();
 
-      for(Value *deps : graph[noDep]) {
-        inEdges[deps]--;
-        if(inEdges[deps] < 1) {
-          queue.push(deps);
-        }
-      }
-    }
+  //     for(Value *deps : graph[noDep]) {
+  //       inEdges[deps]--;
+  //       if(inEdges[deps] < 1) {
+  //         queue.push(deps);
+  //       }
+  //     }
+  //   }
 
-    return sortedList;
-  }
+  //   return sortedList;
+  // }
 
 public:
   static char ID;

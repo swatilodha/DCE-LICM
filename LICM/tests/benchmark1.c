@@ -5,7 +5,7 @@ int test(int x)
     int p = 0;
     for (int i = 0; i < 100; i++)
     {
-        p = x * 2;
+        p = x * 2; // Loop-invariant
     }
     return p;
 }

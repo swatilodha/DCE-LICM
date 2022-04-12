@@ -7,7 +7,7 @@ int test(int x)
     {
         for (int j = 0; j < 100; j++)
         {
-            p = x * 2;
+            p = x * 2; // Loop-invariant
         }
     }
     return p;

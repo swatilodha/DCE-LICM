@@ -13,7 +13,12 @@ int test(int x)
             }
         }
     }
-    return p;
+    int q = 0;
+    for (int k = 0; k < 100; k++)
+    {
+        q = x * 2;
+    }
+    return p * q;
 }
 
 int main()

@@ -20,6 +20,6 @@ run-dom-2: all
 	opt -enable-new-pm=0 -load ./dominators.so -dominators ./tests/benchmark2-m2r.bc -o ./tests/benchmark2-m2r.bc
 
 clean:
-	rm -f *.o ./*/*.o *~ *.so tests/*.bc
+	rm -f *.o ./*/*.o *~ *.so tests/*.bc tests/*.ll
 
 .PHONY: clean all

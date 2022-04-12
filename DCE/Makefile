@@ -21,6 +21,6 @@ run-dce-2: all
 	opt -enable-new-pm=0 -load ./deadCodeElimination.so -dead-code-elimination ./tests/dce_test2-m2r.bc -o ./tests/dce_test2-opt.bc
 
 clean:
-	rm -f *.o ./*/*.o *~ *.so tests/*.bc
+	rm -f *.o ./*/*.o *~ *.so tests/*.bc tests/*.ll
 
 .PHONY: clean all
