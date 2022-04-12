@@ -181,6 +181,6 @@ BitVector Dominators::Analysis::meetFn(vector<BitVector> inputs) {
   return result;
 }
 
-char Dominators::ID = 0;
+char Dominators::ID = 1;
 RegisterPass<Dominators> dom("dominators", "ECE/CS 5544 Dominators Pass");
 } // namespace llvm

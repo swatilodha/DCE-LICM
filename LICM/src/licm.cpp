@@ -123,7 +123,8 @@ private:
   //   for (vector<Value *>::iterator itr = instructions.begin();
   //        itr != instructions.end(); ++itr) {
   //     Instruction *I = dyn_cast<Instruction>(*itr);
-  //     for (Instruction::op_iterator opItr = I->op_begin(); opItr != I->op_end();
+  //     for (Instruction::op_iterator opItr = I->op_begin(); opItr !=
+  //     I->op_end();
   //          ++opItr) {
   //       if (find(instructions.begin(), instructions.end(), *opItr) !=
   //           instructions.end()) {
@@ -133,7 +134,8 @@ private:
   //     }
   //   }
 
-  //   for(map<Value *, int>::iterator itr = inEdges.begin(); itr != inEdges.end(); ++itr) {
+  //   for(map<Value *, int>::iterator itr = inEdges.begin(); itr !=
+  //   inEdges.end(); ++itr) {
   //     if(itr->second == 0) {
   //       queue.push(itr->first);
   //     }
@@ -180,7 +182,9 @@ public:
     }
     set<Value *> loopInstructions =
         getLoopInstructions(L); // Set of Loop Instructions
+
     populateLoopInvariantInstructions(L, loopInstructions);
+
     for (Value *val : loopInvariantInstructions) {
       Instruction *inv = dyn_cast<Instruction>(val);
       inv->moveBefore(preHeader->getTerminator());
@@ -189,6 +193,6 @@ public:
     return true;
   }
 };
-char LICM::ID = 2;
+char LICM::ID = 3;
 RegisterPass<LICM> L("loop-invariant-code-motion", "ECE 5544 LICM Pass");
 } // namespace llvm
