@@ -158,10 +158,10 @@ void LandingPadTransform::joinPreheaderAndLatchAtExit(BasicBlock *preHeader,
       prevPhiUsers; // Stores users for the Phi instructions in loop header.
 
   for (Instruction &I : *header) {
-    if (PHINode *phi = dyn_cast<PHINode>(&I)) {
+    if (PHINode *phiInHeader = dyn_cast<PHINode>(&I)) {
 
       // Store users of Phi variables from the loop header.
-      for (User *U : phi->users()) {
+      for (User *U : phiInHeader->users()) {
         if (Instruction *UI = dyn_cast<Instruction>(U)) {
           prevPhiUsers.push_back(UI);
         }
@@ -174,8 +174,8 @@ void LandingPadTransform::joinPreheaderAndLatchAtExit(BasicBlock *preHeader,
       // same as header_phi_instruction->getIncomingValue(0).
       //
       PHINode *phiAtExit = PHINode::Create(I.getType(), 0);
-      phiAtExit->addIncoming(phi, loopLatch);
-      phiAtExit->addIncoming(phi->getIncomingValue(0), preHeader);
+      phiAtExit->addIncoming(phiInHeader, loopLatch);
+      phiAtExit->addIncoming(phiInHeader->getIncomingValue(0), preHeader);
 
       // Push Phi node to the front of the new loop exit block.
       loopExit->getInstList().push_front(phiAtExit);
@@ -185,7 +185,7 @@ void LandingPadTransform::joinPreheaderAndLatchAtExit(BasicBlock *preHeader,
       // instructions inserted in loop exit. However, we only need to change the
       // users that are not inside the loop, to maintain correctness of the
       // original program.
-      updatePhiUsesOutsideLoop(L, prevPhiUsers, phi, phiAtExit);
+      updatePhiUsesOutsideLoop(L, prevPhiUsers, phiInHeader, phiAtExit);
     }
   }
 }
