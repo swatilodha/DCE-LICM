@@ -6,7 +6,10 @@
 #include "llvm/Pass.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include "dataflow.h"
+#include "anticipated.h"
+#include "available.h"
+#include "postponable.h"
+#include "used.h"
 #include "pre-support.h"
 
 #include <map>
@@ -37,6 +40,12 @@ private:
 
   void Init(Function &);
 
+/**
+ * @brief Split each BasicBlock to contain only one instruction
+ * Insert BasicBlocks before each BB that has multiple predecessors
+ * 
+ * 
+ */
   void Preprocess(Function &);
 
   vector<Expression *> getExpressions(Function &);
