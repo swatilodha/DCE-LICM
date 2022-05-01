@@ -30,7 +30,7 @@ public:
 
 private:
   map<BasicBlock *, struct bbInfo *> infoMap;
-  vector<Expression *> domain;
+  vector<Expression> domain;
 
   map<Expression, int> domainToBitMap;
   map<int, Expression> bitToDomainMap;
@@ -38,6 +38,7 @@ private:
   map<BasicBlock *, struct bbProps *> anticipated;
   map<BasicBlock *, struct bbProps *> available;
   map<BasicBlock *, struct bbProps *> postponable;
+  map<BasicBlock *, struct bbProps *> used;
   map<BasicBlock *, BitVector> earliest;
   map<BasicBlock *, BitVector> latest;
 
@@ -51,9 +52,9 @@ private:
  */
   void Preprocess(Function &);
 
-  vector<Expression *> getExpressions(Function &);
+  vector<Expression> getExpressions(Function &);
 
-  void populateInfoMap(Function &, vector<Expression *> &);
+  void populateInfoMap(Function &, vector<Expression> &);
 
   void printResults();
 };

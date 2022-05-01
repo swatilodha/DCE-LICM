@@ -1,7 +1,3 @@
-// ECE/CS 5544 S22 Assignment 2: available-support.cpp
-// Group: Swati Lodha, Abhijit Tripathy
-
-////////////////////////////////////////////////////////////////////////////////
 
 #include "pre-support.h"
 
