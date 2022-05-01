@@ -52,7 +52,10 @@ private:
   vector<Expression> getExpressions(Function &);
 
   void populateInfoMap(Function &, vector<Expression> &);
-
+  void getAnticipated(Function &, BitVector, BitVector);
+  void getWillBeAvailable(Function &, BitVector, BitVector);
+  void getPostponable(Function &, BitVector, BitVector);
+  void getUsed(Function &, BitVector, BitVector);
   void getEarliest(Function &);
   void getLatest(Function &);
 
@@ -67,18 +70,10 @@ bool PRE::runOnFunction(Function &F) {
 
   BitVector boundaryCondition(domain.size(), false);
   BitVector initCondition(domain.size(), true);
-  AnticipatedExpressions *antPass = new AnticipatedExpressions(
-      domain.size(), boundaryCondition, initCondition);
 
-  antPass->run(F, infoMap);
-  this->anticipated = antPass->result;
+  getAnticipated(F, boundaryCondition, initCondition);
 
-  WillBeAvailableExpressions *wbaPass = new WillBeAvailableExpressions(
-      domain.size(), boundaryCondition, initCondition, this->anticipated);
-
-  wbaPass->run(F, infoMap);
-
-  this->available = wbaPass->result;
+  getWillBeAvailable(F, boundaryCondition, initCondition);
 
   getEarliest(F);
 
@@ -148,6 +143,25 @@ void PRE::populateInfoMap(Function &F, vector<Expression> &domain) {
     }
     infoMap[BB] = blockInfo;
   }
+}
+
+void PRE::getAnticipated(Function &F, BitVector boundaryCondition,
+                         BitVector initCondition) {
+  AnticipatedExpressions *antPass = new AnticipatedExpressions(
+      domain.size(), boundaryCondition, initCondition);
+
+  antPass->run(F, infoMap);
+  this->anticipated = antPass->result;
+}
+
+void PRE::getWillBeAvailable(Function &F, BitVector boundaryCondition,
+                             BitVector initCondition) {
+  WillBeAvailableExpressions *wbaPass = new WillBeAvailableExpressions(
+      domain.size(), boundaryCondition, initCondition, this->anticipated);
+
+  wbaPass->run(F, infoMap);
+
+  this->available = wbaPass->result;
 }
 
 void PRE::getEarliest(Function &F) {
