@@ -41,12 +41,6 @@ private:
 
   void Init(Function &);
 
-  /**
-   * @brief Split each BasicBlock to contain only one instruction
-   * Insert BasicBlocks before each BB that has multiple predecessors
-   *
-   *
-   */
   void Preprocess(Function &);
 
   vector<Expression> getExpressions(Function &);
@@ -58,10 +52,9 @@ private:
   void getUsed(Function &, BitVector, BitVector);
   void getEarliest(Function &);
   void getLatest(Function &);
+  void lazyCodeMotion(Function &);
 
   void printResults();
-
-  class Test {};
 };
 
 bool PRE::runOnFunction(Function &F) {
