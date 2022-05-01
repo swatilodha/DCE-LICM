@@ -28,6 +28,8 @@ vector<Expression> PRE::getExpressions(Function &F) {
 
 void PRE::populateInfoMap(Function &F, vector<Expression> &domain) {
 
+  BitVector empty(domain.size(), false);
+
   int idx = 0;
   for (Expression &exp : domain) {
     domainToBitMap[exp] = idx;
@@ -35,14 +37,32 @@ void PRE::populateInfoMap(Function &F, vector<Expression> &domain) {
     ++idx;
   }
 
-
   ReversePostOrderTraversal<Function *> RPOT(&F);
   for (reverse_iterator<vector<BasicBlock>> itr = RPOT.begin();
        itr != RPOT.end(); ++itr) {
     BasicBlock *BB = &*itr;
+    struct bbInfo *blockInfo = new bbInfo();
+    blockInfo->ref = BB;
+    blockInfo->genSet = empty;
+    blockInfo->killSet = empty;
+
     for (BasicBlock::iterator iitr = BB->begin(); iitr != BB->end(); ++iitr) {
       Instruction *I = &*iitr;
+      if (I->isBinaryOp()) {
+        Expression currExp = Expression(I);
+        if (find(domain.begin(), domain.end(), currExp) != domain.end()) {
+          blockInfo->genSet.set(domainToBitMap[currExp]);
+        }
+
+        for (Expression e : domain) {
+          if (I == e.operand1 || I == e.operand2) {
+            blockInfo->killSet.set(domainToBitMap[e]);
+            blockInfo->genSet.reset(domainToBitMap[e]);
+          }
+        }
+      }
     }
+    infoMap[BB] = blockInfo;
   }
 }
 } // namespace llvm
