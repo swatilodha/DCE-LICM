@@ -17,6 +17,7 @@ pre.so: ./src/pre.o ./src/anticipated.o ./src/available.o ./src/postponable.o ./
 
 test: all
 	opt -enable-new-pm=0 -load ./pre.so -pre ./tests/mbenchmark1-m2r.bc -o ./tests/mbenchmark1-opt.bc
+	opt -enable-new-pm=0 -load ./pre.so -pre ./tests/mbenchmark2-m2r.bc -o ./tests/mbenchmark2-opt.bc
 
 clean:
 	rm -f *.o ./*/*.o *~ *.so tests/*.bc tests/*.ll
