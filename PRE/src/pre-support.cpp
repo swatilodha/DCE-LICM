@@ -19,7 +19,7 @@ Expression::Expression(Instruction *I) {
 // For two expressions to be equal, they must
 // have the same operation and operands.
 bool Expression::operator==(const Expression &e2) const {
-  return this->operand1 == e2.operand1 && this->operand2 == e2.operand1 &&
+  return this->operand1 == e2.operand1 && this->operand2 == e2.operand2 &&
          this->op == e2.op;
 }
 
@@ -28,7 +28,7 @@ bool Expression::operator==(const Expression &e2) const {
 // equality checking by default
 bool Expression::operator<(const Expression &e2) const {
   if (this->operand1 == e2.operand1) {
-    if (this->operand1 == e2.operand2) {
+    if (this->operand2 == e2.operand2) {
       if (this->op == e2.op) {
         return false;
       } else {

@@ -73,7 +73,7 @@ private:
   void initialize(Function &F, map<BasicBlock *, struct bbInfo *> infoMap);
   void initializeBlocks(struct bbProps *block);
   virtual void populateTraversal(Function &F);
-
+  
 public:
   map<BasicBlock *, struct bbProps *> result;
   BitVector initCond; // Initial Condition for the framework
@@ -86,6 +86,8 @@ public:
     this->boundaryCond = boundaryCond;
     this->initCond = initCond;
   }
+
+  void displayVector(BitVector b);
   // abstract function to define the meet operator
   virtual BitVector meetFn(vector<BitVector> input) = 0;
 

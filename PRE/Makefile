@@ -1,27 +1,24 @@
-INC=-I/usr/local/include/
-# all: liveness.so available.so reaching.so
-all: sample-pass.so make_tests
+INC=-I/usr/local/include/ -I ../Dataflow/include/ -I ./include
+SOURCES:= $(shell find ../Dataflow/src -type f -name '*.cpp')
+OBJECTS:= $(SOURCES:.cpp=.o)
+all: pre.so create-tests
+
+create-tests:
+	make -C tests/
 
 CXXFLAGS = -rdynamic $(shell llvm-config --cxxflags) $(INC) -g -O0 -fPIC
 
-# dataflow.o: dataflow.cpp dataflow.h
+../Dataflow/src/%.o: ../Dataflow/src/%.cpp
 
-# available-support.o: available-support.cpp available-support.h
+./src/pre-support.o: ./src/pre-support.cpp
 
-# reaching-support.o: reaching-support.cpp reaching-support.h
-
-# %.so: %.o dataflow.o available-support.o reaching-support.o
-
-make_tests: test1.c
-	clang -Xclang -disable-O0-optnone -O0 -emit-llvm -c test1.c -o test1.bc
-	opt -mem2reg test1.bc -o test1-m2r.bc
-	llvm-dis test1-m2r.bc
-
-
-%.so: %.o
+pre.so: ./src/pre.o ./src/anticipated.o ./src/available.o ./src/postponable.o ./src/used.o ./src/pre-support.o $(OBJECTS)
 	$(CXX) -dylib -shared $^ -o $@
 
+test: all
+	opt -enable-new-pm=0 -load ./pre.so -pre ./tests/mbenchmark1-m2r.bc -o ./tests/mbenchmark1-opt.bc
+
 clean:
-	rm -f *.o *~ *.so *.bc *.ll
+	rm -f *.o ./*/*.o *~ *.so tests/*.bc tests/*.ll
 
 .PHONY: clean all

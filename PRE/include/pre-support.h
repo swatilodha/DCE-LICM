@@ -22,6 +22,7 @@ public:
   Value *operand1;
   Value *operand2;
   Instruction::BinaryOps op;
+  Expression() {}
   Expression(Instruction *I);
   bool operator==(const Expression &e2) const;
   bool operator<(const Expression &e2) const;

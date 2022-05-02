@@ -97,20 +97,31 @@ void Dataflow::initialize(Function &F,
   }
 }
 
+void Dataflow::displayVector(BitVector b) {
+  int _sz = b.size();
+  for (int i = 0; i < _sz; i++) {
+    outs() << (b[i] ? "1" : "0") << " ";
+  }
+}
+
 void Dataflow::run(Function &F, map<BasicBlock *, struct bbInfo *> infoMap) {
   bool converged = false;
   map<BasicBlock *, BitVector> prevOutput;
+  map<BasicBlock *, BitVector> prevInput;
 
   initialize(F, infoMap);
   populateTraversal(F);
 
   int iter = 0;
   vector<BasicBlock *> traversal =
-      (dir == FORWARD) ? poTraversal : rpoTraversal;
+      (dir == FORWARD) ? rpoTraversal : poTraversal;
 
+  int iterations = 5;
   // Begin Dataflow iteration.
   while (!converged) {
     for (BasicBlock *BB : traversal) {
+      prevInput[BB] = result[BB]->bbInput;   // Collect previous outputs of each
+                                             // block before iterating.
       prevOutput[BB] = result[BB]->bbOutput; // Collect previous outputs of each
                                              // block before iterating.
       vector<BitVector> meetInputs;
@@ -148,14 +159,28 @@ void Dataflow::run(Function &F, map<BasicBlock *, struct bbInfo *> infoMap) {
     // Check if the algorithm has converged, by comparing the values of all
     // previous outputs, and the current outputs.
     converged = true;
-    for (map<BasicBlock *, BitVector>::iterator it = prevOutput.begin();
-         it != prevOutput.end(); ++it) {
-      if ((result[it->first]->bbOutput) != it->second) {
-        converged = false;
-        break;
+    if (dir == BACKWARD) {
+      for (map<BasicBlock *, BitVector>::iterator it = prevInput.begin();
+           it != prevInput.end(); ++it) {
+        if ((result[it->first]->bbInput) != it->second) {
+          converged = false;
+          break;
+        }
+      }
+    } else {
+      for (map<BasicBlock *, BitVector>::iterator it = prevOutput.begin();
+           it != prevOutput.end(); ++it) {
+        if ((result[it->first]->bbOutput) != it->second) {
+          converged = false;
+          break;
+        }
       }
     }
+
     ++iter;
+    --iterations;
+    if (iterations == 0)
+      break;
   }
   // outs() << "DFA converged after " << iter << " iterations\n";
 }

@@ -1,3 +1,4 @@
+#include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Pass.h"
@@ -21,9 +22,11 @@ namespace llvm {
 class PRE : public FunctionPass {
 public:
   static char ID;
-  PRE();
+  PRE() : FunctionPass(ID) {}
   virtual bool runOnFunction(Function &F);
-  virtual void getAnalysisUsage(AnalysisUsage &AU) const;
+  virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    AU.setPreservesCFG();
+  }
 
 private:
   map<BasicBlock *, struct bbInfo *> infoMap;
@@ -38,6 +41,8 @@ private:
   map<BasicBlock *, struct bbProps *> used;
   map<BasicBlock *, BitVector> earliest;
   map<BasicBlock *, BitVector> latest;
+
+  bool inDomain(Expression);
 
   void Init(Function &);
 
@@ -54,29 +59,62 @@ private:
   void getLatest(Function &);
   void lazyCodeMotion(Function &);
 
-  void printResults();
+  void printResults(Function &);
+  void printBitVector(BitVector);
 };
 
-bool PRE::runOnFunction(Function &F) {
+char PRE::ID = 0;
+static RegisterPass<PRE> Y("pre", "Partial Redundancy Elimination via LCM",
+                           false,
+                           false /* transformation, not just analysis */);
 
+bool PRE::runOnFunction(Function &F) {
+  outs() << "Initializing Pass"
+         << "\n";
   Init(F);
+  outs() << "Initializing Done."
+         << "\n";
 
   BitVector boundaryCondition(domain.size(), false);
   BitVector initCondition(domain.size(), true);
 
+  outs() << "Getting Anticipated Expressions"
+         << "\n";
   getAnticipated(F, boundaryCondition, initCondition);
+  outs() << "Anticipated Expressions done."
+         << "\n";
 
+  outs() << "Getting WillBeAvailable Expressions"
+         << "\n";
   getWillBeAvailable(F, boundaryCondition, initCondition);
+  outs() << "WillBeAvailable Expressions done."
+         << "\n";
 
   getEarliest(F);
+
+  outs() << "Getting Postponable Expressions"
+         << "\n";
+  getPostponable(F, boundaryCondition, initCondition);
+  outs() << "Postponable Expressions done."
+         << "\n";
+
+  getLatest(F);
+
+  outs() << "Getting Used Expressions\n";
+  getUsed(F, boundaryCondition, boundaryCondition);
+  outs() << "Used Expressions done.\n";
+
+  lazyCodeMotion(F);
+
+  // printResults(F);
 
   return false;
 }
 
 void PRE::Init(Function &F) {
   Preprocess(F);
-  domain = getExpressions(F);
-  populateInfoMap(F, domain);
+  this->domain = getExpressions(F);
+  populateInfoMap(F, this->domain);
 }
 
 void PRE::Preprocess(Function &F) {
@@ -95,6 +133,8 @@ vector<Expression> PRE::getExpressions(Function &F) {
       }
     }
   }
+  outs() << "Domain : ";
+  printSet(exps);
   return exps;
 }
 
@@ -103,16 +143,15 @@ void PRE::populateInfoMap(Function &F, vector<Expression> &domain) {
   BitVector empty(domain.size(), false);
 
   int idx = 0;
-  for (Expression &exp : domain) {
+  for (Expression exp : domain) {
     domainToBitMap[exp] = idx;
     bitToDomainMap[idx] = exp;
     ++idx;
   }
 
   ReversePostOrderTraversal<Function *> RPOT(&F);
-  for (reverse_iterator<vector<BasicBlock>> itr = RPOT.begin();
-       itr != RPOT.end(); ++itr) {
-    BasicBlock *BB = &*itr;
+  for (BasicBlock *BB : RPOT) {
+    // BasicBlock *BB = &itr;
     struct bbInfo *blockInfo = new bbInfo();
     blockInfo->ref = BB;
     blockInfo->genSet = empty;
@@ -163,6 +202,145 @@ void PRE::getEarliest(Function &F) {
     tmp &= this->anticipated[&BB]->bbInput;
     this->earliest[&BB] = tmp;
   }
+}
+
+void PRE::getPostponable(Function &F, BitVector boundaryCondition,
+                         BitVector initCondition) {
+  PostponableExpressions *postPass = new PostponableExpressions(
+      domain.size(), boundaryCondition, initCondition, this->earliest);
+
+  postPass->run(F, infoMap);
+
+  this->postponable = postPass->result;
+}
+
+void PRE::getLatest(Function &F) {
+  for (BasicBlock &BB : F) {
+    BitVector earliestExp = this->earliest[&BB];
+    BitVector postExp = this->postponable[&BB]->bbInput;
+    BitVector tmp = earliestExp;
+    tmp |= postExp;
+
+    BitVector tmp2(domain.size(), true);
+    for (BasicBlock *succ : successors(&BB)) {
+      BitVector tmp3 = this->postponable[succ]->bbInput;
+      tmp3 |= this->earliest[succ];
+      tmp2 &= tmp3;
+    }
+
+    tmp2 = tmp2.flip();
+    tmp2 |= this->infoMap[&BB]->genSet;
+    tmp &= tmp2;
+
+    this->latest[&BB] = tmp;
+  }
+}
+
+void PRE::getUsed(Function &F, BitVector boundaryCondition,
+                  BitVector initCondition) {
+  UsedExpressions *usedPass = new UsedExpressions(
+      domain.size(), boundaryCondition, initCondition, this->latest);
+
+  usedPass->run(F, infoMap);
+
+  this->used = usedPass->result;
+}
+
+void PRE::lazyCodeMotion(Function &F) {
+  outs() << "\n";
+  for (Expression exp : domain) {
+    set<Instruction *> toErase;
+    Instruction *inserted = nullptr;
+
+    ReversePostOrderTraversal<Function *> RPOT(&F);
+    for (BasicBlock *BB : RPOT) {
+      BitVector insert = this->used[BB]->bbOutput;
+      insert &= this->latest[BB];
+      if (insert[domainToBitMap[exp]]) {
+        BinaryOperator *bop =
+            BinaryOperator::Create(exp.op, exp.operand1, exp.operand2, "T",
+                                   &*(BB->getFirstInsertionPt()));
+        outs() << "Inserted " << getShortValueName(bop)
+               << " in the beginning of " << BB->getName().str() << "\n";
+        inserted = dyn_cast<Instruction>(bop);
+      }
+    }
+
+    for (BasicBlock *BB : RPOT) {
+      BitVector replace = this->latest[BB].flip();
+      replace |= this->used[BB]->bbOutput;
+      replace &= this->infoMap[BB]->genSet;
+
+      if (replace[domainToBitMap[exp]]) {
+        for (Instruction &I : *BB) {
+          if (I.isBinaryOp()) {
+            if (exp == Expression(&I) && inserted != nullptr &&
+                &I != inserted) {
+
+              outs() << "Replacing " << getShortValueName(&I) << " with "
+                     << getShortValueName(inserted)
+                     << " in BB : " << BB->getName().str() << "\n";
+              I.replaceAllUsesWith(inserted);
+              toErase.insert(&I);
+            }
+          }
+        }
+      }
+    }
+
+    for (Instruction *I : toErase) {
+      I->eraseFromParent();
+    }
+  }
+  outs() << "\n";
+}
+
+void PRE::printResults(Function &F) {
+  for (BasicBlock &BB : F) {
+    outs() << "BasicBlock : " << BB.getName().str() << "\n";
+    outs() << "################################################################"
+           << "\n";
+
+    outs() << "Use_B : ";
+    printBitVector(this->infoMap[&BB]->genSet);
+
+    outs() << "Kill_B : ";
+    printBitVector(this->infoMap[&BB]->killSet);
+
+    outs() << "Anticipated.in : ";
+    printBitVector(this->anticipated[&BB]->bbInput);
+
+    outs() << "Will be Available.in : ";
+    printBitVector(this->available[&BB]->bbInput);
+
+    outs() << "Earliest : ";
+    printBitVector(this->earliest[&BB]);
+
+    outs() << "Postponable.in : ";
+    printBitVector(this->postponable[&BB]->bbInput);
+
+    outs() << "Latest : ";
+    printBitVector(this->latest[&BB]);
+
+    outs() << "Used.out : ";
+    printBitVector(this->used[&BB]->bbOutput);
+
+    outs() << "################################################################"
+           << "\n";
+  }
+}
+
+void PRE::printBitVector(BitVector arr) {
+  vector<Expression> exps;
+
+  int _sz = arr.size();
+  for (int i = 0; i < _sz; i++) {
+    if (arr[i]) {
+      exps.push_back(bitToDomainMap[i]);
+    }
+  }
+
+  printSet(exps);
 }
 
 }; // namespace llvm
