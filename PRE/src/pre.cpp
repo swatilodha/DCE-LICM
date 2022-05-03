@@ -1,7 +1,9 @@
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/Pass.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "anticipated.h"
@@ -104,6 +106,7 @@ bool PRE::runOnFunction(Function &F) {
   getUsed(F, boundaryCondition, boundaryCondition);
   outs() << "Used Expressions done.\n";
 
+  printResults(F);
   lazyCodeMotion(F);
 
   // printResults(F);
@@ -246,53 +249,154 @@ void PRE::getUsed(Function &F, BitVector boundaryCondition,
   this->used = usedPass->result;
 }
 
-void PRE::lazyCodeMotion(Function &F) {
-  outs() << "\n";
-  for (Expression exp : domain) {
-    set<Instruction *> toErase;
-    Instruction *inserted = nullptr;
+// void PRE::lazyCodeMotion(Function &F) {
+//   outs() << "\n";
+//   for (Expression exp : domain) {
+//     set<Instruction *> toErase;
+//     Instruction *inserted = nullptr;
 
-    ReversePostOrderTraversal<Function *> RPOT(&F);
-    for (BasicBlock *BB : RPOT) {
-      BitVector insert = this->used[BB]->bbOutput;
-      insert &= this->latest[BB];
-      if (insert[domainToBitMap[exp]]) {
+//     ReversePostOrderTraversal<Function *> RPOT(&F);
+//     for (BasicBlock *BB : RPOT) {
+//       BitVector insert = this->used[BB]->bbOutput;
+//       insert &= this->latest[BB];
+//       if (insert[domainToBitMap[exp]]) {
+//         BinaryOperator *bop =
+//             BinaryOperator::Create(exp.op, exp.operand1, exp.operand2, "T",
+//                                    &*(BB->getFirstInsertionPt()));
+//         outs() << "Inserted " << getShortValueName(bop)
+//                << " in the beginning of " << BB->getName().str() << "\n";
+//         inserted = dyn_cast<Instruction>(bop);
+//       }
+//     }
+
+//     for (BasicBlock *BB : RPOT) {
+//       BitVector replace = this->latest[BB].flip();
+//       replace |= this->used[BB]->bbOutput;
+//       replace &= this->infoMap[BB]->genSet;
+
+//       if (replace[domainToBitMap[exp]]) {
+//         for (Instruction &I : *BB) {
+//           if (I.isBinaryOp()) {
+//             if (exp == Expression(&I) && inserted != nullptr &&
+//                 &I != inserted) {
+
+//               outs() << "Replacing " << getShortValueName(&I) << " with "
+//                      << getShortValueName(inserted)
+//                      << " in BB : " << BB->getName().str() << "\n";
+//               I.replaceAllUsesWith(inserted);
+//               toErase.insert(&I);
+//             }
+//           }
+//         }
+//       }
+//     }
+
+//     for (Instruction *I : toErase) {
+//       I->eraseFromParent();
+//     }
+//   }
+//   outs() << "\n";
+// }
+
+void PRE::lazyCodeMotion(Function &F) {
+  map<BasicBlock *, map<int, Value *>> expList;
+
+  // collect and insert all new exp evaluations
+  map<Expression, Value *> expToValueMap;
+  for (BasicBlock &BB : F) {
+
+    // insert new evaluations at the beginning
+    BitVector insert = this->used[&BB]->bbOutput;
+    insert &= this->latest[&BB];
+
+    IRBuilder<> ib(&BB);
+
+    for (int i = 0; i < insert.size(); ++i)
+      if (insert[i]) {
+        outs() << "Inserts in BB : " << BB.getName().str() << " exp : " << bitToDomainMap[i].toString() << "\n";
+        Expression &exp = bitToDomainMap[i];
+        // dbgs() << "inserting expression " << exp2Int[exp] << ":\n" <<
+        // *exp.instr << "\n";
         BinaryOperator *bop =
             BinaryOperator::Create(exp.op, exp.operand1, exp.operand2, "T",
-                                   &*(BB->getFirstInsertionPt()));
-        outs() << "Inserted " << getShortValueName(bop)
-               << " in the beginning of " << BB->getName().str() << "\n";
-        inserted = dyn_cast<Instruction>(bop);
+                                   &*(BB.getFirstInsertionPt()));
+        // ib.SetInsertPoint(&BB, BB.getFirstInsertionPt());
+
+        // Value *istValue = ib.Insert(exp.instr->clone());
+        expToValueMap[exp] = bop;
+        expList[&BB][i] = bop;
+        // dbgs() << "block after insertion :\n" << block << "\n";
+      }
+  }
+
+  map<BasicBlock *, map<int, vector<pair<Value *, BasicBlock *>>>> expState;
+
+  std::queue<BasicBlock *> q;
+  std::map<BasicBlock *, int> ind;
+  for (BasicBlock &block : F) {
+    int preds = 0;
+    for (BasicBlock *pred : predecessors(&block)) {
+      preds++;
+    }
+    ind[&block] = preds;
+  }
+  q.push(&F.getEntryBlock());
+  while (q.size() > 0) {
+
+    BasicBlock &block = *q.front();
+    q.pop();
+
+    for (auto &ele : expList[&block]) {
+      expState[&block][ele.first].push_back(make_pair(ele.second, &block));
+    }
+
+    map<int, Value *> expValueMap;
+    for (int i = 0; i < domainToBitMap.size(); ++i)
+      if (expState[&block][i].size() > 0) {
+        Value *value;
+        if (expState[&block][i].size() > 1) {
+          PHINode *phiNode = PHINode::Create(
+              expState[&block][i][0].first->getType(),
+              expState[&block][i].size(), "", block.getFirstNonPHI());
+          for (int j = 0; j < expState[&block][i].size(); ++j)
+            phiNode->addIncoming(expState[&block][i][j].first,
+                                 expState[&block][i][j].second);
+          value = phiNode;
+        } else
+          value = expState[&block][i][0].first;
+        expValueMap[i] = value;
+      }
+
+    for (auto it = block.begin(); it != block.end();) {
+      auto &instr = *it;
+      ++it;
+      if (find(domain.begin(), domain.end(), Expression(&instr)) == domain.end())
+        continue;
+      Expression exp = Expression(&instr);
+      int index = domainToBitMap[exp];
+
+      if (expValueMap.find(index) != expValueMap.end()) {
+        if (expValueMap[index] == &instr)
+          continue;
+
+        BasicBlock::iterator nit(&instr);
+        ReplaceInstWithValue(block.getInstList(), nit, expValueMap[index]);
       }
     }
 
-    for (BasicBlock *BB : RPOT) {
-      BitVector replace = this->latest[BB].flip();
-      replace |= this->used[BB]->bbOutput;
-      replace &= this->infoMap[BB]->genSet;
+    for (auto next : successors(&block)) {
 
-      if (replace[domainToBitMap[exp]]) {
-        for (Instruction &I : *BB) {
-          if (I.isBinaryOp()) {
-            if (exp == Expression(&I) && inserted != nullptr &&
-                &I != inserted) {
-
-              outs() << "Replacing " << getShortValueName(&I) << " with "
-                     << getShortValueName(inserted)
-                     << " in BB : " << BB->getName().str() << "\n";
-              I.replaceAllUsesWith(inserted);
-              toErase.insert(&I);
-            }
-          }
+      if ((--ind[next]) == 0) {
+        q.push(next);
+      }
+      for (int i = 0; i < domainToBitMap.size(); ++i)
+        if (expValueMap.find(i) != expValueMap.end()) {
+          expState[next][i].push_back(std::make_pair(expValueMap[i], &block));
         }
-      }
-    }
-
-    for (Instruction *I : toErase) {
-      I->eraseFromParent();
     }
   }
-  outs() << "\n";
+
+
 }
 
 void PRE::printResults(Function &F) {
