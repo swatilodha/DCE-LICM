@@ -44,6 +44,8 @@ private:
   map<BasicBlock *, struct bbProps *> used;
   map<BasicBlock *, BitVector> earliest;
   map<BasicBlock *, BitVector> latest;
+  map<BasicBlock *, BitVector> toInsert;
+  map<BasicBlock *, BitVector> toReplace;
 
   bool inDomain(Expression);
 
@@ -60,8 +62,13 @@ private:
   void getUsed(Function &, BitVector, BitVector);
   void getEarliest(Function &);
   void getLatest(Function &);
+  void getOptimalComputationPoints(Function &);
+  void getRedundantOccurences(Function &);
   void lazyCodeMotion(Function &);
 
+  void _TopologicalSortAndReplaceRO(Function &,
+                                    map<BasicBlock *, map<int, Value *>>);
+  map<BasicBlock *, map<int, Value *>> _InsertOCP(Function &);
   void printResults(Function &);
   void printBitVector(BitVector);
 };
@@ -91,10 +98,11 @@ bool PRE::runOnFunction(Function &F) {
 
   getUsed(F, empty, empty);
 
-  // printResults(F);
-  lazyCodeMotion(F);
+  getOptimalComputationPoints(F);
 
-  // printResults(F);
+  getRedundantOccurences(F);
+
+  lazyCodeMotion(F);
 
   return false;
 }
@@ -111,6 +119,7 @@ void PRE::Preprocess(Function &F) {
   // predecessors
 
   // Transform criticial edges
+
   set<pair<BasicBlock *, BasicBlock *>> toSplit;
 
   for (BasicBlock &BB : F) {
@@ -126,6 +135,7 @@ void PRE::Preprocess(Function &F) {
     SplitEdge((*itr).first, (*itr).second);
   }
 }
+
 vector<Expression> PRE::getExpressions(Function &F) {
   vector<Expression> exps;
   for (inst_iterator I = inst_begin(F); I != inst_end(F); ++I) {
@@ -244,156 +254,176 @@ void PRE::getUsed(Function &F, BitVector empty, BitVector full) {
   this->used = usedPass->result;
 }
 
-// void PRE::lazyCodeMotion(Function &F) {
-//   outs() << "\n";
-//   for (Expression exp : domain) {
-//     set<Instruction *> toErase;
-//     Instruction *inserted = nullptr;
+void PRE::getOptimalComputationPoints(Function &F) {
+  for (BasicBlock &BB : F) {
+    BitVector tmp = this->used[&BB]->bbOutput;
+    tmp &= this->latest[&BB];
+    this->toInsert[&BB] = tmp;
+  }
+}
 
-//     ReversePostOrderTraversal<Function *> RPOT(&F);
-//     for (BasicBlock *BB : RPOT) {
-//       BitVector insert = this->used[BB]->bbOutput;
-//       insert &= this->latest[BB];
-//       if (insert[domainToBitMap[exp]]) {
-//         BinaryOperator *bop =
-//             BinaryOperator::Create(exp.op, exp.operand1, exp.operand2, "T",
-//                                    &*(BB->getFirstInsertionPt()));
-//         outs() << "Inserted " << getShortValueName(bop)
-//                << " in the beginning of " << BB->getName().str() << "\n";
-//         inserted = dyn_cast<Instruction>(bop);
-//       }
-//     }
+void PRE::getRedundantOccurences(Function &F) {
+  for (BasicBlock &BB : F) {
+    BitVector tmp = this->latest[&BB].flip();
+    tmp |= this->used[&BB]->bbOutput;
+    tmp &= this->infoMap[&BB]->genSet;
+    this->toReplace[&BB] = tmp;
+  }
+}
 
-//     for (BasicBlock *BB : RPOT) {
-//       BitVector replace = this->latest[BB].flip();
-//       replace |= this->used[BB]->bbOutput;
-//       replace &= this->infoMap[BB]->genSet;
+map<BasicBlock *, map<int, Value *>> PRE::_InsertOCP(Function &F) {
+  map<BasicBlock *, map<int, Value *>> _inserted;
 
-//       if (replace[domainToBitMap[exp]]) {
-//         for (Instruction &I : *BB) {
-//           if (I.isBinaryOp()) {
-//             if (exp == Expression(&I) && inserted != nullptr &&
-//                 &I != inserted) {
-
-//               outs() << "Replacing " << getShortValueName(&I) << " with "
-//                      << getShortValueName(inserted)
-//                      << " in BB : " << BB->getName().str() << "\n";
-//               I.replaceAllUsesWith(inserted);
-//               toErase.insert(&I);
-//             }
-//           }
-//         }
-//       }
-//     }
-
-//     for (Instruction *I : toErase) {
-//       I->eraseFromParent();
-//     }
-//   }
-//   outs() << "\n";
-// }
-
-void PRE::lazyCodeMotion(Function &F) {
-  map<BasicBlock *, map<int, Value *>> expList;
-
-  // collect and insert all new exp evaluations
-  map<Expression, Value *> expToValueMap;
   for (BasicBlock &BB : F) {
 
-    // insert new evaluations at the beginning
-    BitVector insert = this->used[&BB]->bbOutput;
-    insert &= this->latest[&BB];
-
-    IRBuilder<> ib(&BB);
-
+    BitVector insert = toInsert[&BB];
     for (int i = 0; i < insert.size(); ++i)
       if (insert[i]) {
-        outs() << "Inserts in BB : " << BB.getName().str()
-               << " exp : " << bitToDomainMap[i].toString() << "\n";
+
         Expression &exp = bitToDomainMap[i];
-        // dbgs() << "inserting expression " << exp2Int[exp] << ":\n" <<
-        // *exp.instr << "\n";
+
         BinaryOperator *bop =
             BinaryOperator::Create(exp.op, exp.operand1, exp.operand2, "T",
                                    &*(BB.getFirstInsertionPt()));
-        // ib.SetInsertPoint(&BB, BB.getFirstInsertionPt());
 
-        // Value *istValue = ib.Insert(exp.instr->clone());
-        expToValueMap[exp] = bop;
-        expList[&BB][i] = bop;
-        // dbgs() << "block after insertion :\n" << block << "\n";
+        _inserted[&BB][i] = bop;
       }
   }
 
-  map<BasicBlock *, map<int, vector<pair<Value *, BasicBlock *>>>> expState;
+  return _inserted;
+}
 
-  queue<BasicBlock *> q;
-  map<BasicBlock *, int> ind;
-  for (BasicBlock &block : F) {
+void PRE::_TopologicalSortAndReplaceRO(
+    Function &F, map<BasicBlock *, map<int, Value *>> inserted) {
+
+  /**
+   * @brief This variable stores reaching definitions of temporary variables.
+   * This helps us join multiple temporaries for the same expression at their
+   * dominance frontier(DF+).
+   * The structure of this map is as follows:
+   * map<BasicBlock,
+   *       map<index in domain (Represents an Expression),
+   *             vector<pair<Definition of Temporary Variable,
+   *                         BasicBlock from which definition is reaching>>>>
+   *
+   */
+  map<BasicBlock *, map<int, vector<pair<Value *, BasicBlock *>>>> _state;
+
+  queue<BasicBlock *> Q;
+
+  map<BasicBlock *, int> inDeg; // In-degrees for each BasicBlock in the CFG
+
+  // Calculate in-degrees. For BasicBlock BB, in-degree[BB] = count of
+  // predecessors of BB
+  for (BasicBlock &BB : F) {
     int preds = 0;
-    for (BasicBlock *pred : predecessors(&block)) {
+    for (BasicBlock *pred : predecessors(&BB)) {
       preds++;
     }
-    ind[&block] = preds;
+    inDeg[&BB] = preds;
   }
-  q.push(&F.getEntryBlock());
-  while (q.size() > 0) {
 
-    BasicBlock &block = *q.front();
-    q.pop();
+  // Start Toplogical Sort
+  Q.push(&F.getEntryBlock());
 
-    for (auto &ele : expList[&block]) {
-      expState[&block][ele.first].push_back(make_pair(ele.second, &block));
+  while (Q.size() > 0) {
+
+    BasicBlock &currBlock = *Q.front();
+    Q.pop();
+
+    /* For each Temporary variable inserted in the BasicBlock, update State.
+     * i.first refers to the index of the Expression in the domain BitVector.
+     * i.second refers to the inserted Temporary value.
+     */
+    for (auto &i : inserted[&currBlock]) {
+      _state[&currBlock][i.first].push_back(make_pair(i.second, &currBlock));
     }
 
-    map<int, Value *> expValueMap;
-    for (int i = 0; i < domainToBitMap.size(); ++i)
-      if (expState[&block][i].size() > 0) {
-        Value *value;
-        if (expState[&block][i].size() > 1) {
-          PHINode *phiNode = PHINode::Create(
-              expState[&block][i][0].first->getType(),
-              expState[&block][i].size(), "", block.getFirstNonPHI());
-          for (int j = 0; j < expState[&block][i].size(); ++j)
-            phiNode->addIncoming(expState[&block][i][j].first,
-                                 expState[&block][i][j].second);
-          value = phiNode;
-        } else
-          value = expState[&block][i][0].first;
-        expValueMap[i] = value;
-      }
+    map<int, Value *>
+        replaceWith; // Mapping of each Expression index in the domain, to the
+                     // Value it needs to be replaced with in the current block.
 
-    for (auto it = block.begin(); it != block.end();) {
-      auto &instr = *it;
+    for (int i = 0; i < domainToBitMap.size();
+         ++i) { // For each Expression in Domain
+
+      if (_state[&currBlock][i].size() > 0) {
+        Value *value;
+
+        // For a given Expression represented by i, check if definitions from
+        // multiple values reach this block.
+        if (_state[&currBlock][i].size() > 1) {
+
+          // If multiple definitions for an Expression is reaching the current
+          // block, create a Phi Node and join the conflicting definitions.
+          PHINode *phiNode =
+              PHINode::Create(_state[&currBlock][i][0].first->getType(),
+                              _state[&currBlock][i].size(), Twine(),
+                              currBlock.getFirstNonPHI());
+
+          for (int j = 0; j < _state[&currBlock][i].size(); ++j) {
+            phiNode->addIncoming(_state[&currBlock][i][j].first,
+                                 _state[&currBlock][i][j].second);
+          }
+          // When we look for Expressions to replace with, we will use this Phi
+          // Instruction
+          value = phiNode;
+        } else {
+          value = _state[&currBlock][i][0].first;
+        }
+        replaceWith[i] = value;
+      }
+    }
+
+    // Check if there are Expressions that are Redundant Occurences and thus
+    // need to be replaced.
+    for (auto it = currBlock.begin(); it != currBlock.end(); ) {
+      Instruction &I = *it;
       ++it;
-      if (instr.isBinaryOp()) {
-        if (find(domain.begin(), domain.end(), Expression(&instr)) ==
-            domain.end())
+      if (I.isBinaryOp()) {
+        if (find(domain.begin(), domain.end(), Expression(&I)) == domain.end())
           continue;
-        Expression exp = Expression(&instr);
+        Expression exp = Expression(&I);
         int index = domainToBitMap[exp];
 
-        if (expValueMap.find(index) != expValueMap.end()) {
-          if (expValueMap[index] == &instr)
-            continue;
+        // toReplace represents the BitVector representation of Redundant
+        // Occurences
+        if (this->toReplace[&currBlock][domainToBitMap[exp]]) {
+          if (replaceWith.find(index) != replaceWith.end()) {
+            // If the Instruction itself is the Temporary Instruction, we skip
+            // an iteration
+            if (replaceWith[index] == &I)
+              continue;
 
-          BasicBlock::iterator nit(&instr);
-          ReplaceInstWithValue(block.getInstList(), nit, expValueMap[index]);
+            BasicBlock::iterator at(&I);
+            ReplaceInstWithValue(currBlock.getInstList(), at,
+                                 replaceWith[index]);
+          }
         }
       }
     }
 
-    for (auto next : successors(&block)) {
-
-      if ((--ind[next]) == 0) {
-        q.push(next);
+    for (auto next : successors(&currBlock)) {
+      // We have visted the current block, therefore, we reduce the in-degree of
+      // its successors. If the in-degree becomes 0 for any successor, we add it
+      // to Topological Sort queue. This ensures that we don't visit a node
+      // without visiting all its predecessors first.
+      if ((--inDeg[next]) == 0) {
+        Q.push(next);
       }
-      for (int i = 0; i < domainToBitMap.size(); ++i)
-        if (expValueMap.find(i) != expValueMap.end()) {
-          expState[next][i].push_back(std::make_pair(expValueMap[i], &block));
+
+      // Propagate the definition of Temporary variable inserted, to all the successors.
+      for (int i = 0; i < domainToBitMap.size(); ++i) {
+        if (replaceWith.find(i) != replaceWith.end()) {
+          _state[next][i].push_back(make_pair(replaceWith[i], &currBlock));
         }
+      }
     }
   }
+}
+void PRE::lazyCodeMotion(Function &F) {
+
+  map<BasicBlock *, map<int, Value *>> _inserted = _InsertOCP(F);
+  _TopologicalSortAndReplaceRO(F, _inserted);
 }
 
 void PRE::printResults(Function &F) {
