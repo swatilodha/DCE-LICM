@@ -18,8 +18,14 @@ pre.so: ./src/pre.o ./src/anticipated.o ./src/available.o ./src/postponable.o ./
 test: all
 	opt -enable-new-pm=0 -load ./pre.so -pre ./tests/mbenchmark1-m2r.bc -o ./tests/mbenchmark1-opt.bc
 	opt -enable-new-pm=0 -load ./pre.so -pre ./tests/mbenchmark2-m2r.bc -o ./tests/mbenchmark2-opt.bc
-	llvm-dis ./tests/mbenchmark2-opt.bc
+	opt -enable-new-pm=0 -load ./pre.so -pre ./tests/mbenchmark3-m2r.bc -o ./tests/mbenchmark3-opt.bc
+	opt -enable-new-pm=0 -load ./pre.so -pre ./tests/mbenchmark4-m2r.bc -o ./tests/mbenchmark4-opt.bc
+	opt -enable-new-pm=0 -load ./pre.so -pre ./tests/mbenchmark5-m2r.bc -o ./tests/mbenchmark5-opt.bc
 	llvm-dis ./tests/mbenchmark1-opt.bc
+	llvm-dis ./tests/mbenchmark2-opt.bc
+	llvm-dis ./tests/mbenchmark3-opt.bc
+	llvm-dis ./tests/mbenchmark4-opt.bc
+	llvm-dis ./tests/mbenchmark5-opt.bc
 
 clean:
 	rm -f *.o ./*/*.o *~ *.so tests/*.bc tests/*.ll

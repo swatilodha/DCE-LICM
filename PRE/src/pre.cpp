@@ -3,8 +3,8 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Pass.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include "anticipated.h"
 #include "available.h"
@@ -13,6 +13,7 @@
 #include "used.h"
 
 #include <map>
+#include <queue>
 #include <set>
 #include <vector>
 
@@ -71,42 +72,26 @@ static RegisterPass<PRE> Y("pre", "Partial Redundancy Elimination via LCM",
                            false /* transformation, not just analysis */);
 
 bool PRE::runOnFunction(Function &F) {
-  outs() << "Initializing Pass"
-         << "\n";
+
+  outs() << "Running PRE Pass\n";
   Init(F);
-  outs() << "Initializing Done."
-         << "\n";
 
-  BitVector boundaryCondition(domain.size(), false);
-  BitVector initCondition(domain.size(), true);
+  BitVector empty(domain.size(), false);
+  BitVector full(domain.size(), true);
 
-  outs() << "Getting Anticipated Expressions"
-         << "\n";
-  getAnticipated(F, boundaryCondition, initCondition);
-  outs() << "Anticipated Expressions done."
-         << "\n";
+  getAnticipated(F, empty, full);
 
-  outs() << "Getting WillBeAvailable Expressions"
-         << "\n";
-  getWillBeAvailable(F, boundaryCondition, initCondition);
-  outs() << "WillBeAvailable Expressions done."
-         << "\n";
+  getWillBeAvailable(F, empty, full);
 
   getEarliest(F);
 
-  outs() << "Getting Postponable Expressions"
-         << "\n";
-  getPostponable(F, boundaryCondition, initCondition);
-  outs() << "Postponable Expressions done."
-         << "\n";
+  getPostponable(F, empty, full);
 
   getLatest(F);
 
-  outs() << "Getting Used Expressions\n";
-  getUsed(F, boundaryCondition, boundaryCondition);
-  outs() << "Used Expressions done.\n";
+  getUsed(F, empty, empty);
 
-  printResults(F);
+  // printResults(F);
   lazyCodeMotion(F);
 
   // printResults(F);
@@ -124,6 +109,22 @@ void PRE::Preprocess(Function &F) {
   // TODO: Ensure each statement is in a basic block of its own, except Phi
   // instructions. Split incoming edge for each basic block with multiple
   // predecessors
+
+  // Transform criticial edges
+  set<pair<BasicBlock *, BasicBlock *>> toSplit;
+
+  for (BasicBlock &BB : F) {
+    if (BB.hasNPredecessorsOrMore(2)) {
+      for (BasicBlock *pred : predecessors(&BB)) {
+        toSplit.insert(make_pair(pred, &BB));
+      }
+    }
+  }
+
+  for (set<pair<BasicBlock *, BasicBlock *>>::iterator itr = toSplit.begin();
+       itr != toSplit.end(); ++itr) {
+    SplitEdge((*itr).first, (*itr).second);
+  }
 }
 vector<Expression> PRE::getExpressions(Function &F) {
   vector<Expression> exps;
@@ -136,8 +137,6 @@ vector<Expression> PRE::getExpressions(Function &F) {
       }
     }
   }
-  outs() << "Domain : ";
-  printSet(exps);
   return exps;
 }
 
@@ -180,19 +179,17 @@ void PRE::populateInfoMap(Function &F, vector<Expression> &domain) {
   }
 }
 
-void PRE::getAnticipated(Function &F, BitVector boundaryCondition,
-                         BitVector initCondition) {
-  AnticipatedExpressions *antPass = new AnticipatedExpressions(
-      domain.size(), boundaryCondition, initCondition);
+void PRE::getAnticipated(Function &F, BitVector empty, BitVector full) {
+  AnticipatedExpressions *antPass =
+      new AnticipatedExpressions(domain.size(), empty, full);
 
   antPass->run(F, infoMap);
   this->anticipated = antPass->result;
 }
 
-void PRE::getWillBeAvailable(Function &F, BitVector boundaryCondition,
-                             BitVector initCondition) {
+void PRE::getWillBeAvailable(Function &F, BitVector empty, BitVector full) {
   WillBeAvailableExpressions *wbaPass = new WillBeAvailableExpressions(
-      domain.size(), boundaryCondition, initCondition, this->anticipated);
+      domain.size(), empty, full, this->anticipated);
 
   wbaPass->run(F, infoMap);
 
@@ -207,10 +204,9 @@ void PRE::getEarliest(Function &F) {
   }
 }
 
-void PRE::getPostponable(Function &F, BitVector boundaryCondition,
-                         BitVector initCondition) {
-  PostponableExpressions *postPass = new PostponableExpressions(
-      domain.size(), boundaryCondition, initCondition, this->earliest);
+void PRE::getPostponable(Function &F, BitVector empty, BitVector full) {
+  PostponableExpressions *postPass =
+      new PostponableExpressions(domain.size(), empty, full, this->earliest);
 
   postPass->run(F, infoMap);
 
@@ -239,10 +235,9 @@ void PRE::getLatest(Function &F) {
   }
 }
 
-void PRE::getUsed(Function &F, BitVector boundaryCondition,
-                  BitVector initCondition) {
-  UsedExpressions *usedPass = new UsedExpressions(
-      domain.size(), boundaryCondition, initCondition, this->latest);
+void PRE::getUsed(Function &F, BitVector empty, BitVector full) {
+  UsedExpressions *usedPass =
+      new UsedExpressions(domain.size(), empty, full, this->latest);
 
   usedPass->run(F, infoMap);
 
@@ -313,7 +308,8 @@ void PRE::lazyCodeMotion(Function &F) {
 
     for (int i = 0; i < insert.size(); ++i)
       if (insert[i]) {
-        outs() << "Inserts in BB : " << BB.getName().str() << " exp : " << bitToDomainMap[i].toString() << "\n";
+        outs() << "Inserts in BB : " << BB.getName().str()
+               << " exp : " << bitToDomainMap[i].toString() << "\n";
         Expression &exp = bitToDomainMap[i];
         // dbgs() << "inserting expression " << exp2Int[exp] << ":\n" <<
         // *exp.instr << "\n";
@@ -331,8 +327,8 @@ void PRE::lazyCodeMotion(Function &F) {
 
   map<BasicBlock *, map<int, vector<pair<Value *, BasicBlock *>>>> expState;
 
-  std::queue<BasicBlock *> q;
-  std::map<BasicBlock *, int> ind;
+  queue<BasicBlock *> q;
+  map<BasicBlock *, int> ind;
   for (BasicBlock &block : F) {
     int preds = 0;
     for (BasicBlock *pred : predecessors(&block)) {
@@ -370,17 +366,20 @@ void PRE::lazyCodeMotion(Function &F) {
     for (auto it = block.begin(); it != block.end();) {
       auto &instr = *it;
       ++it;
-      if (find(domain.begin(), domain.end(), Expression(&instr)) == domain.end())
-        continue;
-      Expression exp = Expression(&instr);
-      int index = domainToBitMap[exp];
-
-      if (expValueMap.find(index) != expValueMap.end()) {
-        if (expValueMap[index] == &instr)
+      if (instr.isBinaryOp()) {
+        if (find(domain.begin(), domain.end(), Expression(&instr)) ==
+            domain.end())
           continue;
+        Expression exp = Expression(&instr);
+        int index = domainToBitMap[exp];
 
-        BasicBlock::iterator nit(&instr);
-        ReplaceInstWithValue(block.getInstList(), nit, expValueMap[index]);
+        if (expValueMap.find(index) != expValueMap.end()) {
+          if (expValueMap[index] == &instr)
+            continue;
+
+          BasicBlock::iterator nit(&instr);
+          ReplaceInstWithValue(block.getInstList(), nit, expValueMap[index]);
+        }
       }
     }
 
@@ -395,8 +394,6 @@ void PRE::lazyCodeMotion(Function &F) {
         }
     }
   }
-
-
 }
 
 void PRE::printResults(Function &F) {
