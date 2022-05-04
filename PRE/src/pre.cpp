@@ -402,7 +402,7 @@ void PRE::_TopologicalSortAndReplaceRO(
       }
     }
 
-    for (auto next : successors(&currBlock)) {
+    for (BasicBlock *next : successors(&currBlock)) {
       // We have visted the current block, therefore, we reduce the in-degree of
       // its successors. If the in-degree becomes 0 for any successor, we add it
       // to Topological Sort queue. This ensures that we don't visit a node
